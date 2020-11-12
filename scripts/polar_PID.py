@@ -17,6 +17,7 @@ D = 0.2
 
 class polar_PID():
     def __init__(self):
+        print("STARTING POLAR PID NODE")
         rospy.init_node("wall_distance_PID_controller", anonymous=False)
         topic_in = "laser/dist_to_wall"
         self.subscription = rospy.Subscriber(topic_in, Polar_dist, self.PID)
@@ -78,6 +79,7 @@ class polar_PID():
         self.times.append(self.time)
         self.dists.append(dist_diff)
 
+        print(ctrl)
 
         if self.time > self.showgraph:
             self.showgraph += 500
