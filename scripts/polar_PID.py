@@ -4,7 +4,7 @@ from sklearn import linear_model
 import rospy
 import cv2 as cv
 import geometry_msgs
-from geometry_msgs import Twist
+from geometry_msgs.msg import Twist
 from dist_ransac.msg import Polar_dist
 import matplotlib.pyplot as plt
 
@@ -19,8 +19,8 @@ class polar_PID():
     def __init__(self):
         rospy.init_node("wall_distance_PID_controller", anonymous=False)
         topic_in = "laser/dist_to_wall"
-        self.subscription = rospy.Subscriber(topic_in, Polar_dist, self.RANSAC)
-        topic_out = "/cmd_vel geometry_msgs/Twist"
+        self.subscription = rospy.Subscriber(topic_in, Polar_dist, self.PID)
+        topic_out = "/cmd_vel"
         self.publisher = rospy.Publisher(topic_out, Twist, queue_size=10)
         rate = rospy.Rate(10)  # or whatever
         self.P = P
@@ -32,8 +32,10 @@ class polar_PID():
         #add timing
 
         #for recording:
-        self.dists = [[0, 0]]
+        self.dists = []
+        self.times = []
         self.time = 0
+        self.showgraph = 500
 
     def PID(self, msg):
         dist = msg.dist
@@ -73,11 +75,15 @@ class polar_PID():
         self.publisher.publish(rmsg)
 
         self.time += 1
-        self.dists.append([self.time, dist_diff])
+        self.times.append(self.time)
+        self.dists.append(dist_diff)
 
-        if self.time > 500:
-            plt.plot(self.dists)
+
+        if self.time > self.showgraph:
+            self.showgraph += 500
+            plt.plot(self.times, self.dists)
             plt.show()
+
 
 def main(args=None):
     PID_node = polar_PID()

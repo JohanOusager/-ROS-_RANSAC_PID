@@ -41,7 +41,7 @@ class RANSAC_subscriber():
         #noise
         def add_noise(points, n):
             return np.concatenate((points, (np.random.uniform(low=-msg.range_max, high=msg.range_max, size=(n,2)))))
-        positions = add_noise(positions, 25)
+        #positions = add_noise(positions, 25)
 
         self.image = np.zeros([np.int(np.ceil(self.drawScale*2*msg.range_max)),
                                np.int(np.ceil(self.drawScale*2*msg.range_max)), 3], dtype=np.uint8)
@@ -121,7 +121,7 @@ class RANSAC_subscriber():
         self.publisher.publish(rmsg)
 
         cv.imshow('image', self.image)
-        cv.waitKey(1)
+        cv.waitKey(0.05)
 
     def draw_points(self, points):
         for point in points:
