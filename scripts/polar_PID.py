@@ -9,11 +9,11 @@ from dist_ransac.msg import Polar_dist
 import matplotlib.pyplot as plt
 
 VEL = 1
-AV_MAX = 2
-TARGET_DIST = 1
-P = 1
-I = 0.2
-D = 0.2
+AV_MAX = 1000
+TARGET_DIST = 1.75
+P = 30
+I = 0
+D = 0
 
 class polar_PID():
     def __init__(self):
@@ -23,7 +23,8 @@ class polar_PID():
         self.subscription = rospy.Subscriber(topic_in, Polar_dist, self.PID)
         topic_out = "/cmd_vel"
         self.publisher = rospy.Publisher(topic_out, Twist, queue_size=10)
-        rate = rospy.Rate(10)  # or whatever
+        self.rate = 5
+        rospy.Rate(self.rate)  # or whatever
         self.P = P
         self.I = I
         self.D = D
@@ -36,14 +37,14 @@ class polar_PID():
         self.dists = []
         self.times = []
         self.time = 0
-        self.showgraph = 500
+        self.showgraph = 1000
 
     def PID(self, msg):
         dist = msg.dist
         angle = msg.angle
 
         def right_or_left(ang):
-            if (0 < ang < 2*np.pi):
+            if (ang > 0):
                 return "left"
             return "right"
 
@@ -56,11 +57,13 @@ class polar_PID():
         dist_deriv = dist_diff - self.last_err
 
         ctrl = self.P * dist_diff
-        ctrl += self.I * self.integral_err
+        ctrl += self.I * self.integral_err * 1.0/self.rate
         ctrl += self.D * dist_deriv
 
         if ctrl > AV_MAX:
             ctrl = AV_MAX
+        elif ctrl < -AV_MAX:
+            ctrl = -AV_MAX
 
         self.last_err = dist_diff
 
@@ -79,10 +82,10 @@ class polar_PID():
         self.times.append(self.time)
         self.dists.append(dist_diff)
 
-        print(ctrl)
+        print("In:", dist_diff, "    out:", ctrl)
 
         if self.time > self.showgraph:
-            self.showgraph += 500
+            self.showgraph += 1000
             plt.plot(self.times, self.dists)
             plt.show()
 

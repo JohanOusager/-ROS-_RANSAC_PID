@@ -12,7 +12,8 @@ class RANSAC_subscriber():
         topic = "/laser/scan"
         self.subscription = rospy.Subscriber(topic, LaserScan, self.RANSAC)
         self.publisher = rospy.Publisher("laser/dist_to_wall", Polar_dist, queue_size=10)
-        rate = rospy.Rate(10)  # or whatever
+        self.rate = 5
+        rospy.Rate(self.rate)  # or whatever
         self.image = np.array([0])
         self.drawScale = 25
 
@@ -120,8 +121,8 @@ class RANSAC_subscriber():
         rmsg.angle = angle_to_point(min_dist_point)
         self.publisher.publish(rmsg)
 
-        cv.imshow('image', self.image)
-        cv.waitKey(0.05)
+        #cv.imshow('image', self.image)
+        #cv.waitKey(1)
 
     def draw_points(self, points):
         for point in points:
