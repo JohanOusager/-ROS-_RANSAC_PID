@@ -36,6 +36,8 @@ class RANSAC_subscriber():
 
         positions = np.array([np.array([x_dist(a, d), y_dist(a, d)]) for (a, d) in zip(angle_arr, ranges)])
         positions = positions[np.isfinite(positions).any(axis=1)]
+        positions = positions[np.linalg.norm(positions, axis=1) > 0.2]
+        print(positions.shape)
         if len(positions) == 0:
             raise(IOError, "NO IN-RANGE POINTS")
 
@@ -52,15 +54,13 @@ class RANSAC_subscriber():
         fit_sets = []
         fit_models = []
         min_samples = max(positions.size/10, 20) #TUNE THIS
-        min_inliers = 20
         while np.array(positions).shape[0] > min_samples:
             #try:
+            print(positions.shape)
             rs = linear_model.RANSACRegressor(min_samples=min_samples)
             rs.fit(np.expand_dims(positions[:, 0], axis=1), positions[:, 1])
             inlier_mask = rs.inlier_mask_
             inlier_points = positions[np.array(inlier_mask)]
-            if inlier_points.shape[0] < min_inliers:
-                break
             min_x = np.min(inlier_points[:,0], axis=0)
             max_x = np.max(inlier_points[:,0], axis=0)
             start = np.array([min_x, rs.predict([[min_x]])[0]])
@@ -71,13 +71,18 @@ class RANSAC_subscriber():
             #except:
             #    break
 
+        if not fit_models:
+            return
+
         if (len(fit_models) == 0):
             raise(AssertionError, "NO LINES COULD BE FIT")
             return
 
         self.draw_lines(fit_models)
 
-        def nearest_point_on_line(line_start, line_end):
+        def nearest_point_on_line(line_start, line_end, point=np.array((0,0))):
+            line_start -= point
+            line_end -= point
             a_to_p = -line_start
             a_to_b = line_end - line_start
             sq_mag_a_to_b = a_to_b[0]**2 + a_to_b[1]**2
@@ -87,14 +92,30 @@ class RANSAC_subscriber():
             dot_product = a_to_p[0]*a_to_b[0] + a_to_p[1]*a_to_b[1]
             dist_a_to_c = dot_product / sq_mag_a_to_b
             c = np.array([start[0] + a_to_b[0]*dist_a_to_c, start[1] + a_to_b[1]*dist_a_to_c])
-            return c
+            return c + point
+
+        def is_point_between(s, e, p):
+            if (np.linalg.norm(e-p) > np.linalg.norm(e-s) or np.linalg.norm(p-s) > np.linalg.norm(e-s)):
+                return False
+            else:
+                return True
 
         min_dist = np.inf
         min_dist_point = np.array([0, 0])
-        for sets in fit_models:
-            point = nearest_point_on_line(sets[0], sets[1])
-            boop = point[0]**2 + point[1]**2
+        for model in fit_models:
+            #find nearest point on the line, relative to the robot
+            point = nearest_point_on_line(model[0], model[1])
+
+            #get the distance to the point
             dist = np.sqrt(point[0]**2 + point[1]**2)
+
+            #check if the point is on the line segment
+            if not is_point_between(model[0], model[-1], point):
+                dist_start = np.sqrt(model[0,0]**2 + model[0,1]**2)
+                dist_end = np.sqrt(model[1,0]**2 + model[1,1]**2)
+                dist = np.min([dist_end, dist_start])
+
+            #if the distance
             if dist < min_dist:
                 min_dist = dist
                 min_dist_point = point
