@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import numpy as np
 from sklearn import linear_model
 import rospy
@@ -9,13 +9,15 @@ from dist_ransac.msg import Polar_dist
 class RANSAC_subscriber():
     def __init__(self):
         rospy.init_node("ransac_wall_dist_pub", anonymous=True)
-        topic = "/laser/scan"
+        topic = '/scan' # "/laser/scan" # for simulation
         self.subscription = rospy.Subscriber(topic, LaserScan, self.RANSAC)
+        print('starting RANASC node')
         self.publisher = rospy.Publisher("laser/dist_to_wall", Polar_dist, queue_size=10)
-        self.rate = 5
+        self.rate = 50
         rospy.Rate(self.rate)  # or whatever
         self.image = np.array([0])
         self.drawScale = 25
+        self.num = 0
 
     def RANSAC(self, msg):
         angle_min = msg.angle_min
@@ -36,8 +38,8 @@ class RANSAC_subscriber():
 
         positions = np.array([np.array([x_dist(a, d), y_dist(a, d)]) for (a, d) in zip(angle_arr, ranges)])
         positions = positions[np.isfinite(positions).any(axis=1)]
-        positions = positions[np.linalg.norm(positions, axis=1) > 0.2]
-        print(positions.shape)
+
+        positions = positions[np.linalg.norm(positions, axis=1) > 0.4] # Sort wheel points away
         if len(positions) == 0:
             raise(IOError, "NO IN-RANGE POINTS")
 
@@ -53,11 +55,10 @@ class RANSAC_subscriber():
         # do a ransac
         fit_sets = []
         fit_models = []
-        min_samples = max(positions.size/10, 20) #TUNE THIS
+        min_samples = max(positions.size//10, 20) #TUNE THIS
         while np.array(positions).shape[0] > min_samples:
             #try:
-            print(positions.shape)
-            rs = linear_model.RANSACRegressor(min_samples=min_samples)
+            rs = linear_model.RANSACRegressor(min_samples=min_samples, residual_threshold=0.05) # 5cm
             rs.fit(np.expand_dims(positions[:, 0], axis=1), positions[:, 1])
             inlier_mask = rs.inlier_mask_
             inlier_points = positions[np.array(inlier_mask)]
@@ -71,11 +72,8 @@ class RANSAC_subscriber():
             #except:
             #    break
 
-        if not fit_models:
-            return
-
         if (len(fit_models) == 0):
-            raise(AssertionError, "NO LINES COULD BE FIT")
+            print("NO LINES COULD BE FIT")
             return
 
         self.draw_lines(fit_models)
@@ -141,7 +139,10 @@ class RANSAC_subscriber():
         rmsg.dist = min_dist
         rmsg.angle = angle_to_point(min_dist_point)
         self.publisher.publish(rmsg)
-
+        
+        cv.imwrite(f'/images/scan_{self.num:03d}.png', self.image)
+        print(f'Writing image: {self.num}')
+        self.num += 1
         #cv.imshow('image', self.image)
         #cv.waitKey(1)
 
