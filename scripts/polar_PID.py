@@ -7,12 +7,13 @@ import geometry_msgs
 from geometry_msgs.msg import Twist
 from dist_ransac.msg import Polar_dist
 import matplotlib.pyplot as plt
+from time import time
 
 VEL = 1
-AV_MAX = 1000
-TARGET_DIST = 1.75
-P = 30
-I = 0
+AV_MAX = 6
+TARGET_DIST = 1
+P = 10
+I = 1
 D = 0
 
 class polar_PID():
@@ -36,12 +37,15 @@ class polar_PID():
         #for recording:
         self.dists = []
         self.times = []
-        self.time = 0
-        self.showgraph = 1000
+        self.time = time()
+        #self.showgraph = 1000
 
     def PID(self, msg):
         dist = msg.dist
         angle = msg.angle
+
+        time_diff = time() - self.time
+        self.time = time()
 
         def right_or_left(ang):
             if (ang > 0):
@@ -52,9 +56,9 @@ class polar_PID():
         if right_or_left(angle) == "left":  #account for differnece in direction
             dist_diff = (-dist_diff)
 
-        self.integral_err += dist_diff
+        self.integral_err += dist_diff * time_diff
 
-        dist_deriv = dist_diff - self.last_err
+        dist_deriv = (dist_diff - self.last_err) / time_diff
 
         ctrl = self.P * dist_diff
         ctrl += self.I * self.integral_err * 1.0/self.rate
@@ -78,9 +82,8 @@ class polar_PID():
 
         self.publisher.publish(rmsg)
 
-        self.time += 1
-        self.times.append(self.time)
         self.dists.append(dist_diff)
+        self.times.append(self.time)
 
         print("In:", dist_diff, "    out:", ctrl)
 
