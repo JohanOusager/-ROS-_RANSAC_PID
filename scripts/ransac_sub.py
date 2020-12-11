@@ -6,17 +6,29 @@ import cv2 as cv
 from sensor_msgs.msg import LaserScan
 from dist_ransac.msg import Polar_dist
 
+MIN_RANGE = 0.4             #Meters
+MAX_RANGE = 5.6             #Meters
+RATE = 50                   #Hz
+MIN_INLIERS = 10            #Observations
+RESIDUAL_THRESHOLD = 0.1    #Meters
+MAX_FAILS = 1               #Nr of times RANSAC may fail before we give up
+
 class RANSAC_subscriber():
     def __init__(self):
         rospy.init_node("ransac_wall_dist_pub", anonymous=True)
         topic = '/scan' # "/laser/scan" # for simulation
         self.subscription = rospy.Subscriber(topic, LaserScan, self.RANSAC)
-        print('starting RANASC node')
+        print('starting RANSAC node')
         self.publisher = rospy.Publisher("laser/dist_to_wall", Polar_dist, queue_size=10)
-        self.rate = 50
-        rospy.Rate(self.rate)  # or whatever
+        self.rate = RATE
+        self.max_range = MAX_RANGE
+        self.min_range = MIN_RANGE
+        self.min_inliers = MIN_INLIERS
+        self.residual_threshold = RESIDUAL_THRESHOLD
+        self.max_fails = MAX_FAILS
+        rospy.Rate(self.rate)
         self.image = np.array([0])
-        self.drawScale = 25
+        self.drawScale = 100
         self.num = 0
 
     def RANSAC(self, msg):
@@ -24,22 +36,31 @@ class RANSAC_subscriber():
         angle_max = msg.angle_max
         angle_inc = msg.angle_increment
         ranges = np.array(msg.ranges)
-        #ranges = ranges[ranges > msg.range_min]
-        #ranges = ranges[ranges < msg.range_max]
+
         if len(ranges) == 0:
             raise(IOError, "NO POINTS FROM SCANNER")
         angle_arr = np.arange(angle_min, angle_max+(0.1*angle_inc), angle_inc)
 
         def y_dist(angle, dist):
-            return np.sin(angle)*dist
+            #handle small value error
+            if np.isclose(np.sin(angle), 0) or np.isclose(dist, 0):
+                return 0
+            else:
+                #do trigonometry
+                return np.sin(angle)*dist
 
         def x_dist(angle, dist):
-            return np.cos(angle)*dist
+            #handle small value error
+            if np.isclose(np.cos(angle), 0) or np.isclose(dist, 0):
+                return 0
+            else:
+                #do trignometry
+                return np.cos(angle)*dist
 
         positions = np.array([np.array([x_dist(a, d), y_dist(a, d)]) for (a, d) in zip(angle_arr, ranges)])
-        positions = positions[np.isfinite(positions).any(axis=1)]
+        positions = positions[np.linalg.norm(positions, axis=1) < self.max_range]
+        positions = positions[np.linalg.norm(positions, axis=1) > self.min_range] # Sort wheel points away
 
-        positions = positions[np.linalg.norm(positions, axis=1) > 0.4] # Sort wheel points away
         if len(positions) == 0:
             raise(IOError, "NO IN-RANGE POINTS")
 
@@ -55,28 +76,32 @@ class RANSAC_subscriber():
         # do a ransac
         fit_sets = []
         fit_models = []
-        min_samples = max(positions.size//10, 20) #TUNE THIS
-        while np.array(positions).shape[0] > min_samples:
-            #try:
-            rs = linear_model.RANSACRegressor(min_samples=min_samples, residual_threshold=0.05) # 5cm
-            rs.fit(np.expand_dims(positions[:, 0], axis=1), positions[:, 1])
-            inlier_mask = rs.inlier_mask_
-            inlier_points = positions[np.array(inlier_mask)]
-            min_x = np.min(inlier_points[:,0], axis=0)
-            max_x = np.max(inlier_points[:,0], axis=0)
-            start = np.array([min_x, rs.predict([[min_x]])[0]])
-            end = np.array([max_x, rs.predict([[max_x]])[0]])
-            fit_sets.append(inlier_points)
-            fit_models.append(np.array([start, end]))
-            positions = positions[~np.array(inlier_mask)]
-            #except:
-            #    break
+        while np.array(positions).shape[0] > self.min_inliers:
+            fails = 0
+            try:
+                rs = linear_model.RANSACRegressor(min_samples=self.min_inliers,
+                                                  residual_threshold=self.residual_threshold)
+                rs.fit(np.expand_dims(positions[:, 0], axis=1), positions[:, 1])
+                inlier_mask = rs.inlier_mask_
+                inlier_points = positions[np.array(inlier_mask)]
+                min_x = np.min(inlier_points[:,0], axis=0)
+                max_x = np.max(inlier_points[:,0], axis=0)
+                start = np.array([min_x, rs.predict([[min_x]])[0]])
+                end = np.array([max_x, rs.predict([[max_x]])[0]])
+                fit_sets.append(inlier_points)
+                fit_models.append(np.array([start, end]))
+                positions = positions[~np.array(inlier_mask)]
+            except:
+                fails += 1
+                if fails >= self.max_fails:
+                   break;
 
         if (len(fit_models) == 0):
             print("NO LINES COULD BE FIT")
             return
+        print("FIT DID BE DO!")
 
-        self.draw_lines(fit_models)
+        self.draw_lines(fit_models, fit_sets)
 
         def nearest_point_on_line(line_start, line_end, point=np.array((0,0))):
             line_start -= point
@@ -140,7 +165,7 @@ class RANSAC_subscriber():
         rmsg.angle = angle_to_point(min_dist_point)
         self.publisher.publish(rmsg)
         
-        cv.imwrite(f'/images/scan_{self.num:03d}.png', self.image)
+        cv.imwrite(f'/home/jousager/scan_pic/scan_{self.num:03d}.png', self.image)
         print(f'Writing image: {self.num}')
         self.num += 1
         #cv.imshow('image', self.image)
@@ -148,21 +173,33 @@ class RANSAC_subscriber():
 
     def draw_points(self, points):
         for point in points:
-            cx = np.int(np.round(self.image.shape[0]/2 + self.drawScale * point[0]))
-            cy = np.int(np.round(self.image.shape[1]/2 - self.drawScale * point[1]))
-            #self.image[cx, cy] = (0, 0, 255)
-            cv.circle(self.image, (cx, cy), 0, (0, 0, 255))
+            try:
+                cx = np.int(np.round(self.image.shape[0]/2 + self.drawScale * point[0]))
+                cy = np.int(np.round(self.image.shape[1]/2 - self.drawScale * point[1]))
+                #self.image[cx, cy] = (0, 0, 255)
+                cv.circle(self.image, (cx, cy), 0, (0, 0, 255))
         #  x, -y
-        cv.arrowedLine(self.image, (self.image.shape[0]/2-2, self.image.shape[1]/2), (self.image.shape[0]/2+2, self.image.shape[1]/2), (0, 255, 0))
+            except:
+                print("Point draw err ", point)
+        cv.arrowedLine(self.image, (self.image.shape[0]//2-2, self.image.shape[1]//2), (self.image.shape[0]//2+2, self.image.shape[1]//2), (0, 255, 0))
 
-    def draw_lines(self, lines):
-        for line in lines:
+    def draw_lines(self, lines, inliers):
+        colors = [(255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (255, 255, 255), (0, 255, 255)]
+        ci = 0
+        for line, points in zip(lines, inliers):
+            color = colors[ci]
+            ci += 1
+            ci = ci % len(colors)
+            print(ci)
+            for point in points:
+                cx = np.int(np.round(self.image.shape[0]/2 + self.drawScale * point[0]))
+                cy = np.int(np.round(self.image.shape[1]/2 - self.drawScale * point[1]))
+                cv.circle(self.image, (cx, cy), 0, color)
             sx = np.int(np.round(self.image.shape[0]/2 + self.drawScale * line[0, 0]))
             sy = np.int(np.round(self.image.shape[0]/2 - self.drawScale * line[0, 1]))
             ex = np.int(np.round(self.image.shape[0]/2 + self.drawScale * line[1, 0]))
             ey = np.int(np.round(self.image.shape[0]/2 - self.drawScale * line[1, 1]))
-            cv.line(self.image, (sx, sy), (ex, ey), (255, 0, 0))
-
+            cv.line(self.image, (sx, sy), (ex, ey), color)
 def main(args=None):
     RANSAC_node = RANSAC_subscriber()
     rospy.spin()
