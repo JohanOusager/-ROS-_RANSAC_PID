@@ -9,9 +9,10 @@ from dist_ransac.msg import Polar_dist
 MIN_RANGE = 0.4             #Meters
 MAX_RANGE = 5.6             #Meters
 RATE = 50                   #Hz
-MIN_INLIERS = 10            #Observations
+MIN_INLIERS = 20            #Observations
 RESIDUAL_THRESHOLD = 0.1    #Meters
 MAX_FAILS = 1               #Nr of times RANSAC may fail before we give up
+MAX_CLUSTER_DIST = 0.1      #Meters, distance between points in distinct clusters
 
 class RANSAC_subscriber():
     def __init__(self):
@@ -26,6 +27,7 @@ class RANSAC_subscriber():
         self.min_inliers = MIN_INLIERS
         self.residual_threshold = RESIDUAL_THRESHOLD
         self.max_fails = MAX_FAILS
+        self.max_cluster_dist = MAX_CLUSTER_DIST
         rospy.Rate(self.rate)
         self.image = np.array([0])
         self.drawScale = 100
@@ -73,28 +75,41 @@ class RANSAC_subscriber():
                                np.int(np.ceil(self.drawScale*2*msg.range_max)), 3], dtype=np.uint8)
         self.draw_points(positions)
 
+        #split the dataset into clusters naively
+        clusters = []
+        cluster_start = 0
+        for i in range(positions.shape[0] - 1):
+            if np.linalg.norm(positions[i] - positions[i+1]) > self.max_cluster_dist:
+                clusters.append(positions[cluster_start:i])
+                cluster_start = i
+        if clusters == []:
+            clusters = np.array([positions])
+        else:
+            clusters = np.array(clusters)
+
         # do a ransac
         fit_sets = []
         fit_models = []
-        while np.array(positions).shape[0] > self.min_inliers:
-            fails = 0
-            try:
-                rs = linear_model.RANSACRegressor(min_samples=self.min_inliers,
-                                                  residual_threshold=self.residual_threshold)
-                rs.fit(np.expand_dims(positions[:, 0], axis=1), positions[:, 1])
-                inlier_mask = rs.inlier_mask_
-                inlier_points = positions[np.array(inlier_mask)]
-                min_x = np.min(inlier_points[:,0], axis=0)
-                max_x = np.max(inlier_points[:,0], axis=0)
-                start = np.array([min_x, rs.predict([[min_x]])[0]])
-                end = np.array([max_x, rs.predict([[max_x]])[0]])
-                fit_sets.append(inlier_points)
-                fit_models.append(np.array([start, end]))
-                positions = positions[~np.array(inlier_mask)]
-            except:
-                fails += 1
-                if fails >= self.max_fails:
-                   break;
+        for points in clusters:
+            while np.array(points).shape[0] > self.min_inliers:
+                fails = 0
+                try:
+                    rs = linear_model.RANSACRegressor(min_samples=self.min_inliers,
+                                                      residual_threshold=self.residual_threshold)
+                    rs.fit(np.expand_dims(points[:, 0], axis=1), points[:, 1])
+                    inlier_mask = rs.inlier_mask_
+                    inlier_points = points[np.array(inlier_mask)]
+                    min_x = np.min(inlier_points[:,0], axis=0)
+                    max_x = np.max(inlier_points[:,0], axis=0)
+                    start = np.array([min_x, rs.predict([[min_x]])[0]])
+                    end = np.array([max_x, rs.predict([[max_x]])[0]])
+                    fit_sets.append(inlier_points)
+                    fit_models.append(np.array([start, end]))
+                    points = points[~np.array(inlier_mask)]
+                except:
+                    fails += 1
+                    if fails >= self.max_fails:
+                       break
 
         if (len(fit_models) == 0):
             print("NO LINES COULD BE FIT")
